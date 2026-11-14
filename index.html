@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>8번째 용사</title>
+    <link rel="icon" type="image/png" href="TemplateData/favicon.png">
+    <link rel="apple-touch-icon" href="TemplateData/icon_180.png">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap">
+    <link rel="stylesheet" href="TemplateData/style.css">
+  </head>
+  <body>
+    <!-- 캔버스를 16:9 로 창에 맞춘다 · 남는 곳은 검게(UnityPort §2 · 화면 960 × 540 기준). 로딩 막대는 transform 으로만 움직인다(studio_web_build.md §4) -->
+    <div id="app">
+      <div id="stage">
+        <canvas id="unity-canvas" width=960 height=540 tabindex="-1"></canvas>
+        <button id="sndBtn" type="button" aria-label="소리 켜고 끄기">♪</button>
+        <button id="pauseBtn" type="button" aria-label="멈춤">❚❚</button>
+        <div id="load">
+          <div id="status">불러오는 중…</div>
+          <div class="bar"><div id="loadfill"></div></div>
+        </div>
+      </div>
+      <p id="turn">가로로 돌리면 더 크게 보여요</p>
+      <!-- 폰 조작(D-122 · D-280 · 🔄 D-434 행동 버튼 = 오른쪽 아래 엄지 호(D-430 꽃잎 대체) — 자리는 style.css 가 버튼마다 한 줄로 잡는다 · 차례는 상관없다). C# 은 window.EighthTouch 를 프레임마다 읽는다(Plugins/WebGL/EighthTouch.jslib) · data-k 이름 = TouchBridge 비트 -->
+      <div id="touch">
+        <div id="stick" aria-label="이동"><div id="nub"></div></div>
+        <div id="btns"><button data-k="roll" type="button">구르기</button><button data-k="parry" type="button">방어</button><button data-k="attack" type="button">공격</button><button data-k="drink" type="button">성수병</button><button data-k="skill" type="button">기술</button><button data-k="use" id="useBtn" class="hide" type="button">상호작용</button></div>
+      </div>
+      <!-- 키 안내(웹 판 .legend) — 키보드 판만. 폰은 위 버튼이 대신한다 -->
+      <ul class="legend"><li><kbd>WASD</kbd> 이동</li><li><kbd>J</kbd> 공격</li><li><kbd>F</kbd> 상호작용</li><li><kbd>R</kbd> 성수병</li><li><kbd>E</kbd> 기술</li><li><kbd>L</kbd> 방어</li><li><kbd>K</kbd> 구르기</li></ul>
+    </div>
+
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+      var statusEl = document.getElementById("status");
+      var loadEl = document.getElementById("load");
+      var fillEl = document.getElementById("loadfill");
+      var KO = /^ko/i.test(navigator.language || "");
+      var loaded = false;
+      // 받기 = 0 ~ 70 · 준비 = 70 ~ 96(wasm 준비 · 첫 그림 동안 천천히) · 켜지면 100 — 막대 하나로 끝까지
+      var LOAD_SHARE = 70, PREPARE_END = 96, PREPARE_SEC = 9, HIDE_MS = 200;
+      function setBar(v) { fillEl.dataset.pct = v; fillEl.style.transform = "translateX(" + (v - 100) + "%)"; }
+      function setStatus(msg, err) { statusEl.textContent = msg; statusEl.className = err ? "err" : ""; if (err) loadEl.className = "err"; loadEl.style.display = msg ? "block" : "none"; }
+      function fail(msg) { if (!loaded) setStatus((KO ? "못 켰다 — " : "Failed to start — ") + String(msg).split("\n")[0].slice(0, 200), true); }
+      window.addEventListener("error", function (e) { fail(e.message || "error"); });
+      window.addEventListener("unhandledrejection", function (e) { fail(e.reason && (e.reason.message || e.reason)); });
+      if (!KO) { document.documentElement.lang = "en"; document.title = "The 8th Hero"; statusEl.textContent = "Loading…"; }
+      canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+      // 폰(손가락) — 그림 아래(세로) · 그림 위에 겹쳐(가로 · 🔄 D-434) 스틱 · 버튼을 둔다(행동 버튼 = 오른쪽 아래 엄지 호). 아니면 창에 16:9 로 맞춘다
+      var TOUCH = window.matchMedia && matchMedia("(pointer: coarse)").matches;
+      var stage = document.getElementById("stage");
+      if (TOUCH) document.documentElement.className = "touch";
+      // 화면 960 × 540 을 창에 맞춘다. Unity 는 캔버스 CSS 크기 × devicePixelRatio 로 그린다(matchWebGLToCanvasSize 기본)
+      var W = 960, H = 540;
+      function fit() {
+        if (TOUCH) { stage.style.width = ""; stage.style.height = ""; return; } // CSS 가 잡는다
+        // 웹 판 #stage { width: min(100%, calc((100vh - 70px) * 16 / 9)); min-width: min(100%, 320px) } — #app 안쪽 너비 = min(1120, 창) - 32
+        var inner = Math.min(1120, window.innerWidth) - 32;
+        var w = Math.max(Math.min(320, inner), Math.min(inner, (window.innerHeight - 70) * 16 / 9));
+        stage.style.width = Math.floor(w) + "px";
+        stage.style.height = Math.floor(w * 9 / 16) + "px";
+      }
+      // 🔄 D-430 보탬 — 폰은 «보이는 높이»로 맞춘다. 100vh 는 브라우저 바를 숨긴 높이라 삼성 인터넷 가로에서 아래 주소창 · 내비 바가 무대 · 꽃잎 아래를 덮었다(2026-11-13 진짜 폰).
+      // --vh = visualViewport 높이(없으면 innerHeight) · --bk = 행동 묶음 배율(🔄 D-434 — 묶음 189px + 위아래 끝 여백 56 둘이 안 들어갈 만큼 낮을 때만 1 아래 · TouchPad.cs 와 같은 식)
+      function setVh() {
+        var v = window.visualViewport, h = (v && v.height) || window.innerHeight || 0;
+        if (!(h > 0)) return;
+        var s = document.documentElement.style;
+        s.setProperty("--vh", h + "px");
+        s.setProperty("--bk", String(Math.min(1, Math.max(0.6, (h - 112) / 189))));
+      }
+      setVh();
+      fit();
+      window.addEventListener("resize", function () { setVh(); fit(); });
+      window.addEventListener("orientationchange", function () { setTimeout(function () { setVh(); fit(); }, 300); });
+      if (window.visualViewport) window.visualViewport.addEventListener("resize", setVh);
+
+      // 버튼 비트 — TouchBridge.cs 와 같다
+      var BIT = { roll: 1, parry: 2, attack: 4, drink: 8, skill: 16, use: 32, sound: 64, pause: 128 };
+      var T = window.EighthTouch = { on: TOUCH, x: 0, y: 0, held: 0, pressed: 0, set: function (use, skill, dim, scene) {
+        var u = document.getElementById("useBtn");
+        u.className = use ? "" : "hide"; if (use && u.textContent !== use) u.textContent = use;
+        var sb = document.querySelector('#btns button[data-k="skill"]'); if (skill && sb.textContent !== skill) sb.textContent = skill;
+        sb.classList.toggle("dim", (dim & BIT.skill) !== 0);
+        document.querySelector('#btns button[data-k="drink"]').classList.toggle("dim", (dim & BIT.drink) !== 0);
+        document.querySelector('#btns button[data-k="roll"]').style.visibility = (dim & 256) !== 0 ? "hidden" : ""; // U5 웹 판 D-162 — 머리를 끄는 동안 구르기 칸을 숨긴다
+        document.documentElement.classList.toggle("padhide", (dim & 512) !== 0); // 🔄 D-434 묶음 · 스틱을 숨긴다(칸이 무대 위에 겹친다) · 🔄 2026-11-14 조작 장면(걷기 · 싸움)이 아니면 늘 — GameFlow.SyncTouch
+        document.documentElement.classList.toggle("nopause", (dim & 1024) !== 0); // 🆕 2026-11-14 멈출 수 없는 장면 · 메뉴 — ❚❚ 를 숨긴다
+        document.documentElement.classList.toggle("nosound", (dim & 2048) !== 0); // 🆕 2026-11-14 메뉴가 열린 동안 — ♪ 를 숨긴다(«닫기» 단추 테와 겹쳤다)
+      } };
+      if (TOUCH) {
+        window.addEventListener("contextmenu", function (e) { e.preventDefault(); }); // 꾹 누르면 메뉴가 뜬다(D-122)
+        Array.prototype.forEach.call(document.querySelectorAll("#btns button"), function (b) {
+          var bit = BIT[b.dataset.k];
+          b.addEventListener("pointerdown", function (e) { e.preventDefault(); T.pressed |= bit; T.held |= bit; });
+          ["pointerup", "pointercancel", "pointerleave"].forEach(function (n) { b.addEventListener(n, function () { T.held &= ~bit; }); });
+        });
+        var snd = document.getElementById("sndBtn");
+        snd.addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); T.pressed |= BIT.sound; var off = snd.className !== "off"; snd.className = off ? "off" : ""; snd.textContent = off ? "×" : "♪"; });
+        document.getElementById("pauseBtn").addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); T.pressed |= BIT.pause; });
+        // 🆕 2026-11-14 묶음이 숨은 장면(타이틀 · 표지 · 도입 · 대화 · 진 뒤 · 멈춤)에서는 무대 밖 빈 곳을 눌러도 «넘기기»(TouchBridge.OutsideTap 512) — 세로는 아래 칸 자리, 가로는 검은 옆.
+        // 무대(캔버스) 안은 Unity 가 손가락을 직접 받는다 · ♪ ❚❚ 는 제 일만 한다(잡기 단계라 그쪽 stopPropagation 보다 먼저 온다 — 그래서 대상을 거른다)
+        document.addEventListener("pointerdown", function (e) {
+          if (e.pointerType === "mouse" || !document.documentElement.classList.contains("padhide")) return;
+          var t = e.target;
+          if (t === canvas || (t.closest && t.closest("#sndBtn, #pauseBtn"))) return;
+          T.pressed |= 512;
+        }, true);
+        (function () {
+          var el = document.getElementById("stick"), nub = document.getElementById("nub");
+          function move(e) {
+            var r = el.getBoundingClientRect(), max = r.width / 2;
+            var dx = e.clientX - (r.left + max), dy = e.clientY - (r.top + max);
+            var n = Math.hypot(dx, dy);
+            if (n > max) { dx *= max / n; dy *= max / n; }
+            var dead = n < max * 0.2;
+            T.x = dead ? 0 : dx / max; T.y = dead ? 0 : dy / max;
+            nub.style.transform = "translate(" + dx * 0.6 + "px, " + dy * 0.6 + "px)";
+          }
+          el.addEventListener("pointerdown", function (e) { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (err) { /* 합성 입력에는 없다 */ } T.pressed |= 256; move(e); });
+          el.addEventListener("pointermove", function (e) { if (e.buttons || e.pointerType === "touch") move(e); });
+          ["pointerup", "pointercancel"].forEach(function (n) { el.addEventListener(n, function () { T.x = T.y = 0; nub.style.transform = ""; }); });
+        })();
+        // 전체 화면 — 🔴 안드로이드만 된다 · 안 되면 경고 한 줄만 남기고 넘어간다
+        // 🔄 D-430 보탬 — 옛 판은 무대 pointerdown 한 번(once)만 불렀다. 🔴 터치 pointerdown 은 사용자 활성화가 아니라 폰에서 거부됐고(HTML 규칙 — 마우스가 아닌 pointerup · touchend · click 이 활성화다),
+        // once 라 풀린 뒤에도 다시 안 걸렸다. 이제 전체 화면이 아닐 때 문서 어디서든 손을 떼면(pointerup · touchend · 잡기 단계라 스틱 · 꽃잎이 막아도 받는다) 다시 부르고 가로 고정도 다시 해 본다.
+        // 같은 손길의 둘은 한 번만 · 게임 입력은 막지 않는다(preventDefault 없음) · 거부 · 미지원은 경고 한 줄만
+        var FS = window.__eighthFs = { req: 0, lock: 0, fail: 0 }, fsAt = 0;
+        function fsEl() { return document.fullscreenElement || document.webkitFullscreenElement; }
+        function goFull() {
+          var d = document.documentElement, now = Date.now();
+          if (fsEl() || now - fsAt < 500) return;
+          var req = d.requestFullscreen || d.webkitRequestFullscreen;
+          if (!req) return;
+          fsAt = now;
+          FS.req++;
+          FS.act = navigator.userActivation ? navigator.userActivation.isActive : null; // 시험이 본다 — 요청하는 순간 사용자 활성화가 있었나(터치 pointerdown 이면 false 였다)
+          function deny(e) { FS.fail++; console.warn("[Eighth] 전체 화면 거부: " + ((e && ((e.name || "") + " " + (e.message || ""))) || e)); }
+          var p;
+          try { p = req.call(d); } catch (err) { deny(err); return; }
+          function lock() { if (screen.orientation && screen.orientation.lock) { FS.lock++; screen.orientation.lock("landscape").catch(function () {}); } }
+          if (p && p.then) p.then(lock).catch(deny); else lock();
+        }
+        document.addEventListener("pointerup", function (e) { if (e.pointerType !== "mouse") goFull(); }, true);
+        document.addEventListener("touchend", goFull, { capture: true, passive: true });
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/4b8581c6694233fc452d1d5668e11839.loader.js";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/6a58ca0309895368b9e49a9a4629cc31.data.unityweb",
+        frameworkUrl: buildUrl + "/3a7b52f9bbf8defef497cef2141250f5.framework.js.unityweb",
+        codeUrl: buildUrl + "/b8cfa4b961f31e01c24c0e37ba1131c8.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "GameOriented",
+        productName: "8번째 용사",
+        productVersion: "0.9.4",
+        showBanner: function (msg, type) { if (type === "error") fail(msg); else console.warn(msg); },
+      };
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (progress) {
+          var pct = Math.floor(progress * 100);
+          var shown = Math.floor(pct * LOAD_SHARE / 100);
+          if (!statusEl.className) setStatus(pct >= 100 ? (KO ? "준비하는 중…" : "Starting…") : (KO ? "불러오는 중 " : "Loading ") + shown + "%");
+          if (pct >= 100) {
+            if (!statusEl.className && loadEl.className !== "busy") {
+              loadEl.className = "busy";
+              fillEl.style.transition = "transform " + PREPARE_SEC + "s cubic-bezier(.12,.6,.3,1)";
+              setBar(PREPARE_END);
+            }
+          } else {
+            setBar(shown);
+          }
+        }).then(function (instance) {
+          window.unityInstance = instance; // 개발 입구(DevCheck · 빌드에 있을 때만 응답한다)가 쓴다
+          loaded = true;
+          fillEl.style.transition = "transform " + HIDE_MS / 1000 + "s linear";
+          setBar(100);
+          setTimeout(function () { setStatus(""); }, HIDE_MS);
+        }).catch(function (message) { fail(message); });
+      };
+      script.onerror = function () { fail(KO ? "빌드 파일을 못 받았다" : "could not fetch the build"); };
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>
