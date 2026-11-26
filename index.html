@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>8번째 용사</title>
+    <link rel="icon" type="image/png" href="TemplateData/favicon.png">
+    <link rel="apple-touch-icon" href="TemplateData/icon_180.png">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&display=swap">
+    <link rel="stylesheet" href="TemplateData/style.css">
+  </head>
+  <body>
+    <!-- 캔버스를 16:9 로 창에 맞춘다 · 남는 곳은 검게(UnityPort §2 · 화면 960 × 540 기준). 로딩 막대는 transform 으로만 움직인다(studio_web_build.md §4) -->
+    <div id="app">
+      <div id="stage">
+        <canvas id="unity-canvas" width=960 height=540 tabindex="-1"></canvas>
+        <div id="load">
+          <div id="status">불러오는 중…</div>
+          <div class="bar"><div id="loadfill"></div></div>
+        </div>
+      </div>
+      <!-- 키 안내(웹 판 .legend) · 🔴 D-598 «E 기술»을 뺐다(공개 빌드에서 기술 끔 · 다시 켜면 «R 성수병» 뒤에 <li><kbd>E</kbd> 기술</li> 를 되돌린다) · 🗑 D-585 폰 조작(스틱 · 칸 · ♪ ❚❚ · 세로 배치 · 전체 화면 요청)은 걷어 냈다 — 16:9 PC 하나 -->
+      <ul class="legend"><li><kbd>WASD</kbd> 이동</li><li><kbd>J</kbd> 공격</li><li><kbd>F</kbd> 상호작용</li><li><kbd>R</kbd> 성수병</li><li><kbd>L</kbd> 방어</li><li><kbd>K</kbd> 구르기</li></ul>
+    </div>
+
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+      var statusEl = document.getElementById("status");
+      var loadEl = document.getElementById("load");
+      var fillEl = document.getElementById("loadfill");
+      var KO = /^ko/i.test(navigator.language || "");
+      var loaded = false;
+      // 받기 = 0 ~ 70 · 준비 = 70 ~ 96(wasm 준비 · 첫 그림 동안 천천히) · 켜지면 100 — 막대 하나로 끝까지
+      var LOAD_SHARE = 70, PREPARE_END = 96, PREPARE_SEC = 9, HIDE_MS = 200;
+      function setBar(v) { fillEl.dataset.pct = v; fillEl.style.transform = "translateX(" + (v - 100) + "%)"; }
+      function setStatus(msg, err) { statusEl.textContent = msg; statusEl.className = err ? "err" : ""; if (err) loadEl.className = "err"; loadEl.style.display = msg ? "block" : "none"; }
+      function fail(msg) { if (!loaded) setStatus((KO ? "못 켰다 — " : "Failed to start — ") + String(msg).split("\n")[0].slice(0, 200), true); }
+      window.addEventListener("error", function (e) { fail(e.message || "error"); });
+      window.addEventListener("unhandledrejection", function (e) { fail(e.reason && (e.reason.message || e.reason)); });
+      if (!KO) { document.documentElement.lang = "en"; document.title = "The 8th Hero"; statusEl.textContent = "Loading…"; }
+      canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+      var stage = document.getElementById("stage");
+      // 화면 960 × 540 을 창에 맞춘다. Unity 는 캔버스 CSS 크기 × devicePixelRatio 로 그린다(matchWebGLToCanvasSize 기본)
+      var W = 960, H = 540;
+      function fit() {
+        // 웹 판 #stage { width: min(100%, calc((100vh - 70px) * 16 / 9)); min-width: min(100%, 320px) } — #app 안쪽 너비 = min(1120, 창) - 32
+        var inner = Math.min(1120, window.innerWidth) - 32;
+        var w = Math.max(Math.min(320, inner), Math.min(inner, (window.innerHeight - 70) * 16 / 9));
+        stage.style.width = Math.floor(w) + "px";
+        stage.style.height = Math.floor(w * 9 / 16) + "px";
+      }
+      fit();
+      window.addEventListener("resize", fit);
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/b2e306577198706b7a0464bb4b8a3963.loader.js";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/ecb0c84d790db13244de71cd01e084ad.data.unityweb",
+        frameworkUrl: buildUrl + "/d6fa91cb6c372b9b086b98b83fda5f1e.framework.js.unityweb",
+        codeUrl: buildUrl + "/cb93b6350991631e100d5b5480f368a4.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "GameOriented",
+        productName: "8번째 용사",
+        productVersion: "0.9.30",
+        showBanner: function (msg, type) { if (type === "error") fail(msg); else console.warn(msg); },
+      };
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (progress) {
+          var pct = Math.floor(progress * 100);
+          var shown = Math.floor(pct * LOAD_SHARE / 100);
+          if (!statusEl.className) setStatus(pct >= 100 ? (KO ? "준비하는 중…" : "Starting…") : (KO ? "불러오는 중 " : "Loading ") + shown + "%");
+          if (pct >= 100) {
+            if (!statusEl.className && loadEl.className !== "busy") {
+              loadEl.className = "busy";
+              fillEl.style.transition = "transform " + PREPARE_SEC + "s cubic-bezier(.12,.6,.3,1)";
+              setBar(PREPARE_END);
+            }
+          } else {
+            setBar(shown);
+          }
+        }).then(function (instance) {
+          window.unityInstance = instance; // 개발 입구(DevCheck · 빌드에 있을 때만 응답한다)가 쓴다
+          loaded = true;
+          fillEl.style.transition = "transform " + HIDE_MS / 1000 + "s linear";
+          setBar(100);
+          setTimeout(function () { setStatus(""); }, HIDE_MS);
+        }).catch(function (message) { fail(message); });
+      };
+      script.onerror = function () { fail(KO ? "빌드 파일을 못 받았다" : "could not fetch the build"); };
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>
